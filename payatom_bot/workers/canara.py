@@ -259,19 +259,42 @@ class CanaraWorker(BaseWorker):
             except TimeoutException:
                 continue
 
+    # Replace the _dismiss_post_login_ok method in canara.py with this version:
+
     def _dismiss_post_login_ok(self) -> None:
         d = self.driver
         try:
-            # Wait for the "Ok" button to appear and click it
+            # Multiple strategies to click the OK button
+            # Strategy 1: Click the actual button element inside oj-button
             ok_button = WebDriverWait(d, 10).until(
-                EC.element_to_be_clickable(
-                    (By.XPATH, "//span[normalize-space(text())='Ok']/ancestor::button")
+                EC.presence_of_element_located(
+                    (By.XPATH, "//oj-button[@id='pwdExpiryButton']//button[@class='oj-button-button oj-component-initnode']")
                 )
             )
-            ok_button.click()  # Click the button
-            self.info("✅ 'Ok' button clicked to dismiss post-login popup.")
+            self._safe_click(ok_button)
+            self.info("✅ 'Ok' button clicked to dismiss post-login popup (strategy 1).")
         except TimeoutException:
-            self.info("⚠️ 'Ok' button not found after login.")
+            try:
+                # Strategy 2: Click by the span text inside the button
+                ok_button = WebDriverWait(d, 5).until(
+                    EC.presence_of_element_located(
+                        (By.XPATH, "//span[text()='Ok' and @class='oj-button-text']/ancestor::button")
+                    )
+                )
+                self._safe_click(ok_button)
+                self.info("✅ 'Ok' button clicked to dismiss post-login popup (strategy 2).")
+            except TimeoutException:
+                try:
+                    # Strategy 3: Click the close button (X) on the modal header
+                    close_btn = WebDriverWait(d, 5).until(
+                        EC.element_to_be_clickable(
+                            (By.CSS_SELECTOR, "a.modal-header__close")
+                        )
+                    )
+                    self._safe_click(close_btn)
+                    self.info("✅ Modal closed using X button (strategy 3).")
+                except TimeoutException:
+                    self.info("⚠️ 'Ok' button not found after login (all strategies failed).")
 
     def _handle_otp_if_present(self) -> None:
         d = self.driver

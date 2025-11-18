@@ -18,7 +18,7 @@ from ..captcha_solver import TwoCaptcha
 
 # Workers
 from ..workers.tmb import TMBWorker
-from ..workers.iob import IOBWorker          # used for both IOB retail & corporate ...
+from ..workers.iob import IOBWorker          # used for both IOB retail & corporate 
 from ..workers.kgb import KGBWorker
 from ..workers.idbi import IDBIWorker
 from ..workers.idfc import IDFCWorker
@@ -47,7 +47,7 @@ WORKER_BY_BANK: Dict[str, Any] = {
     "IOB": IOBWorker,
     "IOB CORPORATE": IOBWorker,  # same class handles both flows
     "KGB": KGBWorker,
-    "KERALA GRAMIN BANK": KGBWorker,  # tolerate exact label, too
+    "KERALA GRAMIN BANK": KGBWorker,  # need exact label
     "IDBI": IDBIWorker,
     "IDFC": IDFCWorker,
     "CANARA": CanaraWorker,    
@@ -127,7 +127,7 @@ def _mask_acct(acct: str | int | None) -> str:
     return ("****" + s[-4:]) if len(s) >= 4 else s or "—"
 
 
-# 🔹 NEW: small helper to format "how long ago"
+# NEW!! helper to format "time elapsed"
 def _format_ago(delta: timedelta) -> str:
     total = int(delta.total_seconds())
     if total < 0:
