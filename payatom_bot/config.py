@@ -1,12 +1,12 @@
 from __future__ import annotations
 import os
 import logging
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, List
 
 logger = logging.getLogger(__name__)
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class Settings:
     telegram_token: str
     telegram_chat_id: int
@@ -14,7 +14,11 @@ class Settings:
     two_captcha_key: str
     autobank_upload_url: str
     max_profiles: int = 10
-    profile_root: str = os.path.join(os.path.expanduser("~"), "chrome-profiles")
+    profile_root: str = field(default_factory=lambda: os.path.join(os.path.expanduser("~"), "chrome-profiles"))
+    
+    # Balance alert settings
+    alert_group_ids: List[int] = field(default_factory=list)
+    balance_check_interval: int = 180  # Check every 3 minutes (180 seconds)
 
 def load_settings() -> Settings:
     """
@@ -77,17 +81,52 @@ def load_settings() -> Settings:
             "Make sure to create it before running workers.",
             creds_csv
         )
+    
+    # Parse balance alert group IDs
+    alert_group_ids = []
+    alert_ids_str = os.environ.get("ALERT_GROUP_IDS", "")
+    if alert_ids_str:
+        try:
+            alert_group_ids = [int(x.strip()) for x in alert_ids_str.split(",") if x.strip()]
+            logger.info("Balance alerts will be sent to %d group(s)", len(alert_group_ids))
+        except ValueError as e:
+            logger.warning(
+                "Invalid ALERT_GROUP_IDS format (%s); balance alerts disabled. "
+                "Use comma-separated integers (e.g., '-1001234567890,-1009876543210')",
+                e
+            )
+    else:
+        logger.info(
+            "ALERT_GROUP_IDS not set; balance alerts disabled. "
+            "Set this variable to enable balance monitoring."
+        )
+    
+    # Parse balance check interval
+    check_interval = 180  # Default: 3 minutes
+    interval_str = os.environ.get("BALANCE_CHECK_INTERVAL", "")
+    if interval_str:
+        try:
+            check_interval = int(interval_str)
+            if check_interval < 60:
+                logger.warning("BALANCE_CHECK_INTERVAL too low (%d); using minimum of 60 seconds", check_interval)
+                check_interval = 60
+        except ValueError:
+            logger.warning("Invalid BALANCE_CHECK_INTERVAL; using default of 180 seconds")
 
     logger.info(
         "Settings loaded successfully:\n"
         "  - Chat ID: %s\n"
         "  - Credentials CSV: %s\n"
         "  - AutoBank URL: %s\n"
-        "  - 2Captcha: %s",
+        "  - 2Captcha: %s\n"
+        "  - Balance Alerts: %s\n"
+        "  - Check Interval: %d seconds",
         chat_id,
         creds_csv,
         autobank_url,
-        "configured" if two_captcha else "not configured"
+        "configured" if two_captcha else "not configured",
+        "enabled" if alert_group_ids else "disabled",
+        check_interval
     )
 
     return Settings(
@@ -96,4 +135,6 @@ def load_settings() -> Settings:
         credentials_csv=creds_csv,
         two_captcha_key=two_captcha,
         autobank_upload_url=autobank_url,
+        alert_group_ids=alert_group_ids,
+        balance_check_interval=check_interval,
     )

@@ -591,7 +591,230 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
+# =====================================================================
+# Balance Alert Management Commands
+# =====================================================================
 
+@telegram_handler_error_wrapper
+async def alerts_status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /alerts - Show balance monitoring status
+    
+    Displays:
+    - Monitor running status
+    - Number of alert groups configured
+    - Check interval
+    - Current alerts for each alias
+    """
+    balance_monitor = context.application.bot_data.get("balance_monitor")
+    
+    if not balance_monitor:
+        await update.message.reply_text(
+            "❌ Balance monitor not initialized",
+            parse_mode="Markdown"
+        )
+        return
+    
+    status = balance_monitor.get_status()
+    
+    if not status["running"]:
+        await update.message.reply_text(
+            "⚠️ **Balance Monitor Status**\n\n"
+            "Status: ⏸️ Not Running\n"
+            f"Alert Groups: {status['alert_groups']} configured\n\n"
+            "ℹ️ Monitor is not active. Ensure ALERT_GROUP_IDS is configured.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    # Build status message
+    lines = [
+        "📊 **Balance Monitor Status**\n",
+        f"Status: ✅ Running",
+        f"Alert Groups: {status['alert_groups']} group(s)",
+        f"Check Interval: {status['check_interval']} seconds ({status['check_interval']//60} min)",
+        f"Monitored Aliases: {status['monitored_aliases']}",
+        f"Total Alerts Triggered: {status['total_alerts']}\n",
+    ]
+    
+    # Show triggered alerts per alias
+    if balance_monitor.triggered_thresholds:
+        lines.append("**🔔 Active Alerts:**")
+        
+        creds_by_alias = context.application.bot_data.get("creds_by_alias", {})
+        
+        for alias in sorted(balance_monitor.triggered_thresholds.keys()):
+            thresholds = sorted(balance_monitor.triggered_thresholds[alias])
+            cred = creds_by_alias.get(alias, {})
+            bank = cred.get("bank_label", "")
+            
+            threshold_str = ", ".join(f"₹{t:,}" for t in thresholds)
+            
+            if bank:
+                lines.append(f"  • `{alias}` ({bank}): {threshold_str}")
+            else:
+                lines.append(f"  • `{alias}`: {threshold_str}")
+    else:
+        lines.append("✅ No alerts triggered (all accounts below thresholds)")
+    
+    # Threshold information
+    lines.extend([
+        "",
+        "**📈 Configured Thresholds:**",
+        "  • ₹50,000 - Low Priority",
+        "  • ₹60,000 - Low-Medium Priority",
+        "  • ₹70,000 - Medium Priority ⚠️",
+        "  • ₹90,000 - High Priority 🚨",
+        "  • ₹100,000+ - CRITICAL 🔴",
+    ])
+    
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+@telegram_handler_error_wrapper
+async def reset_alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /reset_alerts <alias> - Reset balance alerts for an alias
+    /reset_alerts all - Reset all balance alerts
+    
+    Use this after transferring funds to receive alerts again when
+    the account balance crosses thresholds.
+    """
+    if not context.args:
+        await update.message.reply_text(
+            "**Usage:**\n"
+            "`/reset_alerts <alias>` - Reset alerts for one alias\n"
+            "`/reset_alerts all` - Reset alerts for all aliases\n\n"
+            "ℹ️ Use this after transferring funds from an account.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    balance_monitor = context.application.bot_data.get("balance_monitor")
+    if not balance_monitor:
+        await update.message.reply_text(
+            "❌ Balance monitor not initialized",
+            parse_mode="Markdown"
+        )
+        return
+    
+    target = context.args[0].strip().lower()
+    
+    if target == "all":
+        # Reset all alerts
+        count = len(balance_monitor.triggered_thresholds)
+        balance_monitor.triggered_thresholds.clear()
+        
+        await update.message.reply_text(
+            f"✅ Reset balance alerts for **all** aliases\n"
+            f"({count} alias(es) cleared)",
+            parse_mode="Markdown"
+        )
+        logger.info("Reset all balance alerts")
+        
+    else:
+        # Reset specific alias
+        alias = context.args[0].strip()
+        
+        if alias in balance_monitor.triggered_thresholds:
+            balance_monitor.reset_alerts_for_alias(alias)
+            await update.message.reply_text(
+                f"✅ Reset balance alerts for `{alias}`\n\n"
+                "ℹ️ New alerts will be sent when thresholds are crossed again.",
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text(
+                f"ℹ️ No active alerts for `{alias}`",
+                parse_mode="Markdown"
+            )
+
+
+@telegram_handler_error_wrapper
+async def check_balances_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /check_balances [alias...] - Check current balances and alert status
+    
+    Shows current balance, nearest threshold, and whether alerts are active.
+    """
+    from ..balance_monitor import parse_balance_amount, THRESHOLDS
+    
+    workers = _get_registry(context)
+    creds_by_alias = context.application.bot_data.get("creds_by_alias", {})
+    balance_monitor = context.application.bot_data.get("balance_monitor")
+    
+    targets = context.args if context.args else list(workers.keys())
+    
+    if not targets:
+        await update.message.reply_text(
+            "😴 No active workers",
+            parse_mode="Markdown"
+        )
+        return
+    
+    lines = ["💰 **Balance Status Check**\n"]
+    
+    for alias in targets:
+        w = workers.get(alias)
+        
+        if not w or not safe_operation(
+            lambda: w.is_alive(),
+            context=f"check if {alias} is alive",
+            default=False
+        ):
+            lines.append(f"⚪ `{alias}` - not running")
+            continue
+        
+        cred = creds_by_alias.get(alias, {})
+        bank = cred.get("bank_label", "?")
+        
+        balance_str = safe_operation(
+            lambda: w.last_balance,
+            context=f"get balance for {alias}",
+            default="N/A"
+        ) or "N/A"
+        
+        # Parse numeric balance
+        balance_num = parse_balance_amount(balance_str)
+        
+        if balance_num is None:
+            lines.append(f"🟡 `{alias}` ({bank}) - {balance_str}")
+            continue
+        
+        # Check which threshold this is closest to
+        triggered = []
+        next_threshold = None
+        
+        for threshold in THRESHOLDS:
+            if balance_num >= threshold.amount:
+                triggered.append(f"₹{threshold.amount:,}")
+            elif next_threshold is None:
+                next_threshold = threshold
+        
+        # Format status
+        status_icon = "🔴" if balance_num >= 100_000 else \
+                     "🟠" if balance_num >= 70_000 else \
+                     "🟡" if balance_num >= 50_000 else "🟢"
+        
+        balance_formatted = f"₹{balance_num:,.2f}"
+        
+        status_line = f"{status_icon} `{alias}` ({bank}) - **{balance_formatted}**"
+        
+        if triggered:
+            status_line += f"\n   ⚠️ Crossed: {', '.join(triggered)}"
+        
+        if next_threshold and balance_num < next_threshold.amount:
+            remaining = next_threshold.amount - balance_num
+            status_line += f"\n   📊 Next: ₹{next_threshold.amount:,} (₹{remaining:,.2f} away)"
+        
+        # Check if alerts are active
+        if balance_monitor and alias in balance_monitor.triggered_thresholds:
+            alert_count = len(balance_monitor.triggered_thresholds[alias])
+            status_line += f"\n   🔔 {alert_count} alert(s) sent"
+        
+        lines.append(status_line)
+    
+    await update.message.reply_text("\n\n".join(lines), parse_mode="Markdown")
 # =========================
 # Handler Registration
 # =========================
@@ -607,3 +830,9 @@ def register_session_handlers(app: Application, settings: Settings) -> None:
     app.add_handler(CommandHandler("balance", balance_cmd))
     
     logger.info("Registered session management handlers")
+    # NEW: Balance alert management commands
+    app.add_handler(CommandHandler("alerts", alerts_status_cmd))
+    app.add_handler(CommandHandler("reset_alerts", reset_alerts_cmd))
+    app.add_handler(CommandHandler("balances", check_balances_cmd))
+    
+    logger.info("Registered session management handlers (including balance alerts)")
