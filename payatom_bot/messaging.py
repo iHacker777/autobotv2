@@ -66,7 +66,7 @@ class Messenger:
             self._buf.clear()
         
         fut = asyncio.run_coroutine_threadsafe(
-            self._send_message_with_retry(text, ParseMode.MARKDOWN),
+            self._send_message_with_retry(text, ParseMode.HTML),
             self.loop
         )
         
@@ -179,7 +179,7 @@ class Messenger:
             # Send immediately
             try:
                 fut = asyncio.run_coroutine_threadsafe(
-                    self._send_message_with_retry(text, ParseMode.MARKDOWN),
+                    self._send_message_with_retry(text, ParseMode.HTML),
                     self.loop
                 )
                 

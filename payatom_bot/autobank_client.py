@@ -13,7 +13,7 @@ class AutoBankClient:
 
     def ensure_logged_in(self) -> None:
         d = self.driver
-        d.get("https://autobank.payatom.in/operator_index.php")
+        d.get("https://autostatement.ipay365.net/operator_index.php")
         try:
             self.wait.until(EC.presence_of_element_located((By.ID, "sidebar")))
             return
@@ -33,7 +33,7 @@ class AutoBankClient:
     def upload(self, bank_label: str, account_number: str, file_path: str) -> None:
         d = self.driver
         self.ensure_logged_in()
-        d.get("https://autobank.payatom.in/bankupload.php")
+        d.get("https://autostatement.ipay365.net/bankupload.php")
 
         self.wait.until(EC.presence_of_element_located((By.ID, "drop-zone")))
         Select(self.wait.until(EC.presence_of_element_located((By.ID, "bank")))).select_by_visible_text(bank_label)
