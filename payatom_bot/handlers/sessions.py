@@ -815,6 +815,107 @@ async def check_balances_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         lines.append(status_line)
     
     await update.message.reply_text("\n\n".join(lines), parse_mode="Markdown")
+
+@telegram_handler_error_wrapper
+async def file_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /file <alias> - Send the latest downloaded statement file for an alias
+    """
+    if not context.args:
+        await update.message.reply_text(
+            "**Usage:** `/file <alias>`\n\n"
+            "Send the latest downloaded statement file for the specified alias.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    alias = context.args[0].strip()
+    
+    # Check if alias exists in credentials
+    creds_by_alias = context.application.bot_data.get("creds_by_alias", {})
+    if alias not in creds_by_alias:
+        await update.message.reply_text(
+            f"❌ Unknown alias `{alias}`.\n"
+            "Use `/list` to see available aliases.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    # Construct download directory path
+    download_dir = os.path.join(os.getcwd(), "downloads", alias)
+    
+    if not os.path.exists(download_dir):
+        await update.message.reply_text(
+            f"❌ No downloads found for `{alias}`.\n"
+            "The worker may not have run yet or the download directory doesn't exist.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    # Find the latest statement file
+    try:
+        # Look for common statement file extensions
+        statement_files = []
+        for ext in ['.csv', '.xls', '.xlsx']:
+            pattern_files = [
+                f for f in os.listdir(download_dir)
+                if f.lower().endswith(ext)
+            ]
+            statement_files.extend([
+                os.path.join(download_dir, f) for f in pattern_files
+            ])
+        
+        if not statement_files:
+            await update.message.reply_text(
+                f"❌ No statement files found for `{alias}`.\n"
+                "The worker may not have downloaded any files yet.",
+                parse_mode="Markdown"
+            )
+            return
+        
+        # Get the most recent file
+        latest_file = max(statement_files, key=os.path.getmtime)
+        file_name = os.path.basename(latest_file)
+        file_size = os.path.getsize(latest_file)
+        file_time = datetime.fromtimestamp(os.path.getmtime(latest_file))
+        
+        # Format file info
+        size_kb = file_size / 1024
+        time_str = file_time.strftime("%d/%m/%Y %H:%M:%S")
+        
+        # Get bank info
+        cred = creds_by_alias.get(alias, {})
+        bank = cred.get("bank_label", "")
+        
+        # Send the file
+        status_msg = (
+            f"📄 Sending latest statement for `{alias}`"
+            + (f" ({bank})" if bank else "") + "...\n\n"
+            f"**File:** `{file_name}`\n"
+            f"**Size:** {size_kb:.2f} KB\n"
+            f"**Downloaded:** {time_str}"
+        )
+        
+        await update.message.reply_text(status_msg, parse_mode="Markdown")
+        
+        with open(latest_file, 'rb') as f:
+            await update.message.reply_document(
+                document=f,
+                filename=file_name,
+                caption=f"📊 Latest statement for {alias}"
+            )
+        
+        logger.info("Sent file %s for alias %s to user", file_name, alias)
+        
+    except Exception as e:
+        logger.exception("Error sending file for alias %s", alias)
+        await update.message.reply_text(
+            f"❌ Failed to send file for `{alias}`\n"
+            f"Error: {type(e).__name__}: {str(e)}",
+            parse_mode="Markdown"
+        )
+
+
 # =========================
 # Handler Registration
 # =========================
@@ -828,9 +929,11 @@ def register_session_handlers(app: Application, settings: Settings) -> None:
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("active", active_cmd))
     app.add_handler(CommandHandler("balance", balance_cmd))
-    
+
     logger.info("Registered session management handlers")
-    # NEW: Balance alert management commands
+
+    # NEW: Balance/file alert management commands
+    app.add_handler(CommandHandler("file", file_cmd))
     app.add_handler(CommandHandler("alerts", alerts_status_cmd))
     app.add_handler(CommandHandler("reset_alerts", reset_alerts_cmd))
     app.add_handler(CommandHandler("balances", check_balances_cmd))
