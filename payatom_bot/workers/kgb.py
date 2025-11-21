@@ -22,7 +22,7 @@ class KGBWorker(BaseWorker):
     """
     Kerala Gramin Bank automation:
       1) Login (username + CAPTCHA) → second factor (checkbox + password)
-      2) Account Statement page → pick account → set dates → Search
+      2) Account Statement page -> pick account -> set dates → Search
       3) Select XLS → Generate/OK → wait .xls → upload to AutoBank as "Kerala Gramin Bank"
       4) Optional balance read from summary grid
     Expects creds loader to provide:
@@ -36,7 +36,7 @@ class KGBWorker(BaseWorker):
       }
     """
 
-    LOGIN_URL = "https://netbanking.keralagbank.com/"
+    LOGIN_URL = "https://netbanking.kgb.bank.in/"
 
     def __init__(
         self,
